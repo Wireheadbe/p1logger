@@ -1,0 +1,14 @@
+[Unit]
+Description=P1Logger
+After=syslog.target network.target
+
+[Service]
+User=notarootuser
+WorkingDirectory=/home/notarootuser/p1logger
+ExecStart=/usr/bin/screen -S p1logger -D -m /home/notarootuser/p1logger/p1logger.py
+ExecStop=/usr/bin/screen -S p1logger -X quit
+Restart=always
+RestartSec=10
+
+[Install]
+WantedBy=multi-user.target
