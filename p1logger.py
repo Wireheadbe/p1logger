@@ -20,65 +20,92 @@ p1device="/dev/ttyP1"
 
 ##  HERE BE DRAGONS ##
 ## (do not edit :)) ##
+
+# Non-blocking readline - see https://github.com/pyserial/pyserial/issues/216
+class ReadLine:
+    def __init__(self, s):
+        self.buf = bytearray()
+        self.s = s
+
+    def readline(self):
+        i = self.buf.find(b"\n")
+        if i >= 0:
+            r = self.buf[:i+1]
+            self.buf = self.buf[i+1:]
+            return r
+        while True:
+            i = max(1, min(2048, self.s.in_waiting))
+            data = self.s.read(i)
+            i = data.find(b"\n")
+            if i >= 0:
+                r = self.buf + data[:i+1]
+                self.buf[0:] = data[i+1:]
+                return r
+            else:
+                self.buf.extend(data)
+
+
 def on_publish(client1,userdata,result): #create function for callback
   #print("data published \n")
   pass
- 
+
 client1=paho.Client("control1") #create client object
 client1.on_publish = on_publish #assign function to callback
 client1.connect(broker,port) #establish connection
- 
+
 # Serial Port config
 ser = serial.Serial()
- 
+
 # DSMR 5 Fluvius > 115200 8N1:
 ser.baudrate = 115200
 ser.bytesize = serial.EIGHTBITS
 ser.parity = serial.PARITY_NONE
 ser.stopbits = serial.STOPBITS_ONE
- 
+
 ser.xonxoff = 0
 ser.rtscts = 0
 ser.timeout = 12
 ser.port = p1device
+rl = ReadLine(ser) # Non-blocking readline
 ser.close()
- 
+
 client1.loop_start()
+ser.open()
 
 # Run indefinitely
 while True:
-  ser.open()
+  #ser.open()
   checksum_found = False
 
   # Process below logic until checksum found
   while not checksum_found:
-    telegram_line = ser.readline() # Read a line
+    telegram_line = (rl.readline()) # Read a line
     telegram_line = telegram_line.decode('utf-8').strip() # Strip spaces and blank lines
- 
+
     #print (telegram_line) #debug
- 
+
     if re.match(r'(?=1-0:1.7.0)', telegram_line): #1-0:1.7.0 = Instantaneous draw in kW
       kwAf = telegram_line[10:-4] # cut kW (0000.54)
       wattAf = float(kwAf) * 1000 # multiply to Watt (540.0)
       wattAf = int(wattAf) # round float (540)
-      
+
     if re.match(r'(?=1-0:2.7.0)', telegram_line): #1-0:2.7.0 = Instantaneous injection in kW
       kwIn = telegram_line[10:-4] # cut kW (0000.54)
       wattIn = float(kwIn) * 1000 # multiply to Watt (540.0)
       wattIn = int(wattIn) # round float (540)
- 
+
     if re.match(r'(?=1-0:1.8.1)', telegram_line): #1-0:1.8.1 - Total Day draw / 1-0:1.8.1(13579.595*kWh)
       kwhAfDag = telegram_line[10:-5] # cut kWh (13579.595)
       kwhAfDag = float(kwhAfDag)
- 
+
     if re.match(r'(?=1-0:1.8.2)', telegram_line): #1-0:1.8.2 - Total Night draw / 1-0:1.8.2(14655.223*kWh)
       kwhAfNacht = telegram_line[10:-5] # cut kWh (14655.223)
       kwhAfNacht = float(kwhAfNacht)
-    
+
     if re.match(r'(?=1-0:2.8.1)', telegram_line): #1-0:1.8.1 - Total Day injection / 1-0:1.8.1(13579.595*kWh)
       kwhInDag = telegram_line[10:-5] # cut kWh (13579.595)
       kwhInDag = float(kwhInDag)
- 
+
     if re.match(r'(?=1-0:2.8.2)', telegram_line): #1-0:1.8.2 - Total Night injection / 1-0:1.8.2(14655.223*kWh)
       kwhInNacht = telegram_line[10:-5] # cut kWh (14655.223)
       kwhInNacht = float(kwhInNacht)
@@ -86,17 +113,17 @@ while True:
     if re.match(r'(?=0-1:24.2.3\(.+\))', telegram_line): #0-1:24.2.3 - Total gas use m3 / 0-1:24.2.3(200827154000S)(00002.072*m3)
       gasm3 = telegram_line[26:-4] # cut m3 (00002.072)
       gasm3 = float(gasm3)
- 
+
     # Check if checksum received - marks end of telegram
     if re.match(r'(?=!)', telegram_line):
       checksum_found = True
- 
-  ser.close()
- 
+
+  #ser.close()
+
 ######################################
 # MQTT PUBLISH
 ######################################
- 
+
   client1.publish("fluvius/wattAf", wattAf)
   client1.publish("fluvius/wattIn", wattIn)
   client1.publish("fluvius/kwhAfDag", kwhAfDag)
@@ -107,3 +134,4 @@ while True:
   print("Afname: ",wattAf,"| Injection: ",wattIn)
 
 client1.disconnect()
+ser.close()
